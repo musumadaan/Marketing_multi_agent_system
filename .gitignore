@@ -1,0 +1,54 @@
+# ---- OS / Editor ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+.venv/
+venv/
+ENV/
+build/
+dist/
+.python-version
+.pytest_cache/
+.ipynb_checkpoints/
+.mypy_cache/
+.pyre/
+.pytype/
+
+# ---- Env & Secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- Logs / Coverage ----
+logs/
+*.log
+.coverage
+htmlcov/
+
+# ---- Local Databases / Caches ----
+*.db
+*.sqlite
+*.sqlite3
+
+# ---- Node / web (if any future UI assets) ----
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.next/
+out/
+
+# ---- Mac Neo4j Desktop junk (just in case) ----
+*.neo4j*
+
+# ---- Data (OPTIONAL: ignore large local datasets) ----
+# If your CSVs are big/private, uncomment the next line:
+# marketing_multi_agent_dataset_v1_final/

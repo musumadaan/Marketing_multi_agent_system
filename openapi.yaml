@@ -1,0 +1,234 @@
+openapi: 3.1.0
+info:
+  title: MCP Agents & Memory Service
+  version: 1.0.0
+servers:
+  - url: http://localhost:5000
+paths:
+  /healthz:
+    get:
+      summary: Liveness check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+  /api/interactions/recent:
+    get:
+      summary: Recent interactions backfill
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+      responses:
+        '200':
+          description: List of recent interactions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Interaction'
+  /api/demo/triage:
+    post:
+      summary: Call triage via JSON-RPC
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TriageRequest' }
+      responses:
+        '200':
+          description: Triage result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TriageResult' }
+  /api/demo/engage:
+    post:
+      summary: Call engage via JSON-RPC
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EngageRequest' }
+      responses:
+        '200':
+          description: Engage result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EngageResult' }
+  /api/demo/optimize:
+    post:
+      summary: Call optimize via JSON-RPC
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OptimizeRequest' }
+      responses:
+        '200':
+          description: Optimize result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OptimizeResult' }
+  /api/neo4j/ping:
+    get:
+      summary: Neo4j connectivity + version
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  enabled: { type: boolean }
+                  version: { type: string, nullable: true }
+                  reason: { type: string, nullable: true }
+  /api/neo4j/demo:
+    post:
+      summary: Create a demo semantic edge (Lead -> object) in Neo4j
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lead_id]
+              properties:
+                lead_id:   { type: string }
+                predicate: { type: string, default: engaged_via }
+                object:    { type: string, default: Email }
+      responses:
+        '200':
+          description: Result with a small preview of related triples
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:        { type: boolean }
+                  lead_id:   { type: string, nullable: true }
+                  predicate: { type: string, nullable: true }
+                  object:    { type: string, nullable: true }
+                  preview:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        subject:   { type: string }
+                        predicate: { type: string }
+                        object:    { type: string }
+                  error:     { type: string, nullable: true }
+
+  /mcp:
+    post:
+      summary: JSON-RPC endpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JsonRpcRequest' }
+      responses:
+        '200':
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JsonRpcResponse' }
+components:
+  schemas:
+    JsonRpcRequest:
+      type: object
+      required: [jsonrpc, method, id]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        method: { type: string, enum: ["triage_lead","engage_lead","optimize_campaign"] }
+        params:
+          oneOf:
+            - $ref: '#/components/schemas/TriageRequest'
+            - $ref: '#/components/schemas/EngageRequest'
+            - $ref: '#/components/schemas/OptimizeRequest'
+        id: { oneOf: [{type: string},{type: integer}] }
+    JsonRpcResponse:
+      type: object
+      required: [jsonrpc, id]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        result:
+          oneOf:
+            - $ref: '#/components/schemas/TriageResult'
+            - $ref: '#/components/schemas/EngageResult'
+            - $ref: '#/components/schemas/OptimizeResult'
+        error:
+          type: object
+          properties:
+            code: { type: integer }
+            message: { type: string }
+        id: { oneOf: [{type: string},{type: integer}] }
+    TriageRequest:
+      type: object
+      required: [lead_id]
+      properties:
+        lead_id: { type: string }
+    TriageResult:
+      type: object
+      properties:
+        lead_id: { type: string }
+        category: { type: string, enum: ["Campaign Qualified","Cold Lead","General Inquiry"] }
+        lead_score: { type: number }
+        source: { type: string, nullable: true }
+        campaign_id: { type: string, nullable: true }
+        preferred_channel: { type: string, nullable: true }
+        gdpr_consent: { type: boolean, nullable: true }
+    EngageRequest:
+      type: object
+      required: [lead_id]
+      properties:
+        lead_id: { type: string }
+        category: { type: string, default: "Campaign Qualified" }
+    EngageResult:
+      type: object
+      properties:
+        lead_id: { type: string }
+        action_type: { type: string }
+        action_id: { oneOf: [{type: string},{type: integer}], nullable: true }
+        message: { type: string }
+        context: { type: object, additionalProperties: true, nullable: true }
+        status: { type: string }
+        outcome: { type: string, nullable: true }
+        variant_id: { type: string, nullable: true }
+    OptimizeRequest:
+      type: object
+      required: [campaign_id]
+      properties:
+        campaign_id: { type: string }
+    OptimizeResult:
+      type: object
+      properties:
+        campaign_id: { type: string }
+        kpi: { type: string }
+        metric: { type: string }
+        performance: { type: number }
+        threshold: { type: number }
+        decision: { type: string, enum: ["continue","escalate","insufficient_data"] }
+        access_success: { type: boolean, nullable: true }
+        segment_rules: { type: object, additionalProperties: true, nullable: true }
+    Interaction:
+      type: object
+      properties:
+        interaction_id: { type: string, nullable: true }
+        conversation_id: { type: string, nullable: true }
+        lead_id: { type: string, nullable: true }
+        campaign_id: { type: string, nullable: true }
+        timestamp: { type: string, format: date-time, nullable: true }
+        channel: { type: string, nullable: true }
+        event_type: { type: string }
+        agent_id: { type: string, nullable: true }
+        variant_id: { type: string, nullable: true }
+        outcome: { type: string, nullable: true }
+        metadata_json: { type: object, additionalProperties: true, nullable: true }

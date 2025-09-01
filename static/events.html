@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MCP Events</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bg:#0b0f17; --card:#131a24; --text:#e7edf3; --muted:#9fb0c3; --accent:#4cc9f0; --ok:#00d68f; --warn:#ffd166; --bad:#ff6b6b; }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;background:var(--bg);color:var(--text)}
+    header{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid #1f2a37;position:sticky;top:0;background:linear-gradient(#0b0f17,#0b0f17cc);backdrop-filter:blur(4px);z-index:10}
+    .dot{width:10px;height:10px;border-radius:50%;background:#737373;box-shadow:0 0 0 2px #0002 inset}
+    .dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)}
+    .pill{padding:2px 8px;border-radius:999px;background:#1e293b;color:#93c5fd;font-size:12px}
+    .wrap{max-width:1100px;margin:0 auto;padding:16px 20px}
+    .controls{display:grid;gap:10px;margin-bottom:12px}
+    .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+    input[type="text"]{background:#0f1722;border:1px solid #243244;color:var(--text);padding:8px 10px;border-radius:8px;outline:none}
+    .w240{width:240px} .w160{width:160px}
+    button{background:#1f2a37;color:var(--text);border:1px solid #2b3b52;padding:8px 10px;border-radius:8px;cursor:pointer}
+    button:hover{border-color:#3a4f6a}
+    .grid{display:grid;gap:12px}
+    .card{background:var(--card);border:1px solid #223049;border-radius:14px;padding:12px 14px}
+    .k{color:var(--muted)}
+    .json{margin-top:10px;padding:10px;background:#0f1722;border:1px dashed #2a3a54;border-radius:10px;overflow:auto;max-height:260px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+    .meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+    .tag{font-size:12px;padding:2px 8px;border-radius:999px;background:#162033;border:1px solid #273650}
+    .small{color:var(--muted);font-size:12px}
+    .sep{opacity:.35}
+    .eventname{color:var(--accent);font-weight:600}
+  </style>
+</head>
+<body>
+  <header>
+    <div id="statusDot" class="dot" title="Socket status"></div>
+    <div>MCP Live Events</div>
+    <div class="pill" id="hostInfo"></div>
+    <div class="small" id="since"></div>
+  </header>
+
+  <div class="wrap">
+    <div class="controls">
+      <!-- FILTER -->
+      <div class="row">
+        <input id="filterBox" class="w240" type="text" placeholder="Filter: lead_id, campaign_id, event, text…" />
+        <button id="clearBtn">Clear</button>
+        <button id="reloadBtn">Reload last 50</button>
+        <span class="small sep">|</span>
+        <span class="small">Events: <code>lead_triaged</code>, <code>engagement_sent</code>, <code>campaign_decided</code>, <code>neo4j_demo</code></span>
+      </div>
+
+      <!-- ACTION BUTTONS -->
+      <div class="row">
+        <input id="leadInput" class="w160" type="text" placeholder="lead_id e.g. L0000001" />
+        <button id="btnTriage">Triage</button>
+        <button id="btnEngage">Engage (CQ)</button>
+        <span class="sep">|</span>
+        <input id="campInput" class="w160" type="text" placeholder="campaign_id e.g. CMP0022" />
+        <button id="btnOptimize">Optimize</button>
+        <span class="sep">|</span>
+        <button id="btnNeoPing">Neo4j Ping</button>
+        <input id="neoObj" class="w160" type="text" placeholder="channel e.g. Email" />
+        <button id="btnNeoDemo">Neo4j Demo Edge</button>
+        <span id="neoStatus" class="small"></span>
+      </div>
+    </div>
+
+    <!-- FEED -->
+    <div id="feed" class="grid"></div>
+  </div>
+
+  <!-- Socket.IO client (4.x works with Flask-SocketIO 5.1.x) -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script>
+    const host      = location.origin.replace(/\/$/,'');
+    const statusDot = document.getElementById('statusDot');
+    const hostInfo  = document.getElementById('hostInfo');
+    const sinceEl   = document.getElementById('since');
+    const feedEl    = document.getElementById('feed');
+    const filterEl  = document.getElementById('filterBox');
+    const clearBtn  = document.getElementById('clearBtn');
+    const reloadBtn = document.getElementById('reloadBtn');
+
+    // Buttons & inputs
+    const leadInput   = document.getElementById('leadInput');
+    const campInput   = document.getElementById('campInput');
+    const btnTriage   = document.getElementById('btnTriage');
+    const btnEngage   = document.getElementById('btnEngage');
+    const btnOptimize = document.getElementById('btnOptimize');
+    const btnNeoPing  = document.getElementById('btnNeoPing');
+    const neoObj      = document.getElementById('neoObj');
+    const btnNeoDemo  = document.getElementById('btnNeoDemo');
+
+    hostInfo.textContent = host;
+    sinceEl.textContent  = "since " + new Date().toLocaleString();
+
+    let eventBuf = [];
+
+    // ---------- helpers ----------
+    function escapeHtml(s){return String(s).replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]))}
+
+    function tag(k, v) { if (v==null || v==='') return ''; return `<span class="tag"><span class="k">${k}</span>: ${escapeHtml(String(v))}</span>`; }
+
+    function card({evt, ts, data}) {
+      const el = document.createElement('div');
+      el.className = 'card';
+      el.innerHTML = `
+        <div class="row">
+          <div class="eventname">${escapeHtml(evt)}</div>
+          <div class="small">•</div>
+          <div class="small">${new Date(ts).toLocaleString()}</div>
+        </div>
+        <div class="meta">
+          ${tag('lead_id', data.lead_id)}
+          ${tag('campaign_id', data.campaign_id)}
+          ${tag('action_type', data.action_type)}
+          ${tag('variant_id', data.variant_id)}
+          ${tag('decision', data.decision)}
+          ${tag('kpi', data.kpi)}
+        </div>
+        <pre class="json">${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+      `;
+      return el;
+    }
+
+    function render() {
+      const q = (filterEl.value || '').trim().toLowerCase();
+      const view = q
+        ? eventBuf.filter(it => (it.evt + ' ' + JSON.stringify(it.data)).toLowerCase().includes(q))
+        : eventBuf;
+
+      feedEl.innerHTML = '';
+      for (const item of view) feedEl.appendChild(card(item));
+    }
+
+    function pushEvent(evt, payload) {
+      eventBuf.unshift({ evt, ts: Date.now(), data: payload || {} });
+      if (eventBuf.length > 500) eventBuf.pop();
+      render();
+    }
+
+    // Neo status helpers (robust: will create the span if missing)
+    function getNeoStatusEl() {
+      let el = document.getElementById('neoStatus');
+      if (!el) {
+        const row = btnNeoDemo?.parentElement || document.body;
+        el = document.createElement('span');
+        el.id = 'neoStatus';
+        el.className = 'small';
+        el.style.marginLeft = '8px';
+        row.appendChild(el);
+      }
+      return el;
+    }
+    function setNeoStatus(text, state) {
+      const el = getNeoStatusEl();
+      el.textContent = text;
+      el.style.color = state === 'ok' ? '#00d68f' : state === 'work' ? '#9fb0c3' : '#ff6b6b';
+    }
+
+    // ---------- Socket.IO (polling only: dev server-safe) ----------
+    const socket = io({ transports: ['polling'], upgrade: false });
+
+    socket.on('connect', () => { statusDot.classList.remove('bad'); statusDot.classList.add('ok'); });
+    socket.on('disconnect', () => { statusDot.classList.remove('ok'); statusDot.classList.add('bad'); });
+
+    ['lead_triaged','engagement_sent','campaign_decided','neo4j_demo'].forEach(name => {
+      socket.on(name, (payload) => {
+        pushEvent(name, payload || {});
+        if (name === 'neo4j_demo') setNeoStatus('Edge created ✓', 'ok');
+      });
+    });
+
+    if (socket.onAny) {
+      socket.onAny((name, ...args) => {
+        if (!['lead_triaged','engagement_sent','campaign_decided','neo4j_demo'].includes(name)) {
+          pushEvent(name, args?.[0] || {});
+        }
+      });
+    }
+
+    // ---------- Backfill ----------
+    async function loadRecent(limit=50){
+      try{
+        const r = await fetch(`/api/interactions/recent?limit=${encodeURIComponent(limit)}`);
+        if(!r.ok) throw new Error('HTTP '+r.status);
+        const arr = await r.json();
+        for(const row of arr){ 
+          let data = row;
+          if (row && typeof row.payload === 'string' && row.payload.trim().length){
+            try {
+              data = JSON.parse(row.payload);}
+              catch(_){}
+            }
+            const evt = row.event_type || data.event_type || data.event || 'interaction';
+            pushEvent(evt, data);
+          }
+        } catch(e){ console.warn('recent load failed:', e); }
+    }
+
+    // ---------- HTTP helpers ----------
+    async function postJSON(url, body){
+      const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {}) });
+      if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      return r.json();
+    }
+
+    // ---------- Button handlers ----------
+    btnTriage.addEventListener('click', async ()=>{
+      const lead_id = (leadInput.value || '').trim();
+      if(!lead_id) return alert('Enter a lead_id (e.g., L0000001)');
+      try {
+        const res = await postJSON('/api/demo/triage', { lead_id });
+        pushEvent('client_triage', res);
+      } catch(e){ alert('Triage failed: '+e.message); }
+    });
+
+    btnEngage.addEventListener('click', async ()=>{
+      const lead_id = (leadInput.value || '').trim();
+      if(!lead_id) return alert('Enter a lead_id');
+      try {
+        const res = await postJSON('/api/demo/engage', { lead_id, category: 'Campaign Qualified' });
+        pushEvent('client_engage', res);
+      } catch(e){ alert('Engage failed: '+e.message); }
+    });
+
+    btnOptimize.addEventListener('click', async ()=>{
+      const campaign_id = (campInput.value || '').trim();
+      if(!campaign_id) return alert('Enter a campaign_id (e.g., CMP0022)');
+      try {
+        const res = await postJSON('/api/demo/optimize', { campaign_id });
+        pushEvent('client_optimize', res);
+      } catch(e){ alert('Optimize failed: '+e.message); }
+    });
+
+    btnNeoPing.addEventListener('click', async ()=>{
+      setNeoStatus('pinging…', 'work');
+      try{
+        const r = await fetch('/api/neo4j/ping');
+        const j = await r.json();
+        if (j.ok) { setNeoStatus(`Neo4j OK (${j.version || 'connected'})`, 'ok'); }
+        else { setNeoStatus(`Neo4j disabled: ${j.reason || 'no driver'}`, 'fail'); }
+      }catch(e){
+        setNeoStatus('Neo4j ping failed', 'fail');
+      }
+    });
+
+    btnNeoDemo.addEventListener('click', async ()=>{
+      const lead_id = (leadInput?.value || '').trim();
+      const object  = (neoObj?.value || 'Email').trim();
+      if (!lead_id) return alert('Enter a lead_id (e.g., L0000001)');
+
+      setNeoStatus('creating edge…', 'work');
+      try{
+        const r = await fetch('/api/neo4j/demo', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ lead_id, predicate:'engaged_via', object })
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j && j.ok) {
+          setNeoStatus('Edge created ✓', 'ok');   // set immediately
+          pushEvent('neo4j_demo', j);             // also push to feed
+        } else {
+          setNeoStatus('Demo failed', 'fail');
+          alert('Neo4j demo failed: ' + (j.error || r.statusText));
+        }
+      } catch(e){
+        setNeoStatus('Neo4j demo failed', 'fail');
+        alert('Neo4j demo failed: ' + e.message);
+      }
+    });
+
+    // ---------- Filter wiring ----------
+    ['input','keyup','change'].forEach(ev => filterEl.addEventListener(ev, render));
+    clearBtn.addEventListener('click', ()=>{ filterEl.value=''; eventBuf=[]; render(); });
+    reloadBtn.addEventListener('click', ()=>{ eventBuf=[]; render(); loadRecent(50); });
+
+    // initial
+    loadRecent(50);
+  </script>
+</body>
+</html>
